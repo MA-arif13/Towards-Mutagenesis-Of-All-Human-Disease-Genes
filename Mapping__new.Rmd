@@ -1,0 +1,317 @@
+---
+title: "mapping R new"
+output: html_document
+date: "2025-09-11"
+---
+```{r}
+install.packages("patchwork")
+library(patchwork)
+```
+```{r package and directory}
+library(ggplot2)
+library(gdata)
+library(reshape2)
+library(gridExtra)
+theme_set(theme_classic())
+```
+```{r}
+setwd("/Users/amohammed/Documents/study/rpoj")
+```
+
+
+```{r get Data}
+a <- read.table("new.txt", sep="\t")
+plasmid_info <- read.table("info.txt", sep="\t", header=TRUE)
+a <- merge(a, plasmid_info, by.x="V1", by.y="well", all.x=TRUE)
+```
+
+```{r}
+colnames(a)[1] <- "well"
+nowell_info <- c("Cycle Nr.","Temp. [\xa1C]","Time [s]")
+a <- a[!(a$well %in% nowell_info), ]
+```
+
+```{r}
+od_cols <- 2:301
+a[, od_cols] <- lapply(a[, od_cols], function(x) as.numeric(gsub(",", ".", x)))
+```
+
+```{r}
+target_AF <- grep("^[A-F]", a$well, value=TRUE)
+target_AF <- c(target_AF, "H6","H7","H8")
+blank_AF  <- plasmid_info$well[plasmid_info$plasmid=="cblank"]
+
+target_OD_AF <- a[a$well %in% target_AF, od_cols]
+blank_OD_AF  <- a[a$well %in% blank_AF, od_cols]
+
+a_realOD_AF <- as.data.frame(as.matrix(target_OD_AF) - apply(blank_OD_AF, 2, mean, na.rm=TRUE))
+a_realOD_AF[a_realOD_AF < 0] <- 0
+
+a_metadata_AF <- a[a$well %in% target_AF, c("well","plasmid","conditions")]
+a_realOD_AF <- cbind(a_metadata_AF, a_realOD_AF)
+```
+
+```{r}
+library(reshape2)
+# --- Group 2: Custom G/H groups with their blanks ---
+groups <- list(
+  G1_G3   = list(target=paste0("G",1:3),   blank="H5"),
+  G4_G6   = list(target=paste0("G",4:6),   blank="H9"),
+  G7_G9   = list(target=paste0("G",7:9),   blank="H10"),
+  G10_G12 = list(target=paste0("G",10:12), blank="H11"),
+  H2_H4   = list(target=paste0("H",2:4),   blank="H12")
+)
+
+results_list <- list()
+
+for (g in names(groups)) {
+  target_wells <- groups[[g]]$target
+  blank_well   <- groups[[g]]$blank
+  
+  target_OD <- a[a$well %in% target_wells, od_cols]
+  blank_OD  <- a[a$well %in% blank_well, od_cols]
+  
+  corrected <- as.data.frame(as.matrix(target_OD) - apply(blank_OD, 2, mean, na.rm=TRUE))
+  corrected[corrected < 0] <- 0
+  
+  a_metadata <- a[a$well %in% target_wells, c("well","plasmid","conditions")]
+  corrected <- cbind(a_metadata, corrected)
+  
+  results_list[[g]] <- corrected
+}
+a_realOD <- rbind(a_realOD_AF, do.call(rbind, results_list))
+
+# --- Melt into long format ---
+a.mlt <- melt(a_realOD, id.vars=c("well","plasmid","conditions"), variable.name="time", value.name="OD")
+
+# Convert cycle labels to hours
+a.mlt$time <- sapply(as.character(a.mlt$time), function(x) {
+  return(as.numeric(substr(x,2,nchar(x))) * 920 / 3600)
+})
+colnames(a.mlt)
+```
+
+
+```{r}
+p1a <- ggplot(a.mlt[a.mlt$conditions == "1%", ], aes(x=time, y=OD, group=well)) +
+  geom_line(aes(color=plasmid)) +
+  xlab("time (h)") + ylab("OD600") +
+  ggtitle("GAL1")
+p1a
+
+p1a <- ggplot(
+  a.mlt[a.mlt$conditions %in% c("0%", "1%", "1.50%", "1.75%", "2%"), ], 
+  aes(x=time, y=OD, group=well, color=conditions)
+) +
+  geom_line() +
+  xlab("time (h)") + 
+  ylab("OD600") +
+  ggtitle("GAL Growth Curves (all conditions)")
+
+p1a
+
+p2a <- ggplot(
+  a.mlt[a.mlt$conditions %in% c("100", "50", "25", "12.5", "6.25","3.125", "1.5625","0.78125","0.390","0"), ], 
+  aes(x=time, y=OD, group=well, color=conditions)
+) +
+  geom_line() +
+  xlab("time (h)") + 
+  ylab("OD600") +
+  ggtitle("CuSo4")
+
+p2a
+
+p3a<-ggplot(
+  a.mlt[a.mlt$conditions %in% c("4000","2000","1000","500","250", "125","62.5","31.25","15.6","7.81","3.9","1.9"),],
+  aes(x= time,y=OD, group=well, color=conditions)
+)+
+  geom_line()+
+  xlab("time(h)")+
+  ylab("OD600")+
+  ggtitle("pGEM")
+
+p3a
+
+ p4a <- ggplot(a.mlt[a.mlt$plasmid == "pAM04", ], aes(x=time, y=OD, group=well)) + 
+   geom_line(aes(color=plasmid)) +
+  xlab("time (h)") + ylab("OD600") +
+  ggtitle("ADH")
+ p4a
+ 
+  p5a <- ggplot(a.mlt[a.mlt$plasmid == "pAM05", ], aes(x=time, y=OD, group=well)) + 
+   geom_line(aes(color=plasmid)) +
+  xlab("time (h)") + ylab("OD600") +
+  ggtitle("YFP")
+ p5a
+ 
+   p6a <- ggplot(a.mlt[a.mlt$plasmid == "pAM06", ], aes(x=time, y=OD, group=well)) + 
+   geom_line(aes(color=plasmid)) +
+  xlab("time (h)") + ylab("OD600") +
+  ggtitle("CYC")
+ p6a
+ 
+
+
+```
+```{r}
+
+combined_plot <- (p1a | p2a | p3a) /
+                 (p4a | p5a | p6a)
+
+# Save as a high-resolution PNG
+ggsave("all_growth_curves.png", combined_plot, width = 30, height = 15, dpi = 300)
+
+# Optionally, also save as PDF
+ggsave("all_growth_curves.pdf", combined_plot, width = 30, height = 15)
+
+combined_plot
+```
+```{r}
+p3a<-ggplot(
+  a.mlt[a.mlt$conditions %in% c("31.25"),],
+  aes(x= time,y=OD, group=well, color=conditions)
+)+
+  geom_line()+
+  xlab("time(h)")+
+  ylab("OD600")+
+  ggtitle("pGEM")
+
+p3a
+
+```
+
+```{r extract fitness estimates}
+
+###Fitness estimate 1: time to reach half of maximal OD
+
+a$t_to_max_od50<-apply(a[2:301],MARGIN = 1,FUN=function(row){
+
+  max_od<-max(row)
+
+  cycle_to_max_od50<-min(which(row>max_od*0.5))
+
+  t_to_max_od50<-cycle_to_max_od50*15
+
+  return(t_to_max_od50)
+
+})
+
+ggplot(a[which(a$conditions %in% c("0%", "1%", "1.50%", "1.75%", "2%")),])+geom_boxplot(aes(y=t_to_max_od50,x=plasmid,color=conditions))+
+
+  ggtitle("GA concentration trial PCA")+
+
+  ylab("time to reach half of maximum OD")
+
+a$t_to_max_od50_ofWT<-apply(a[2:301],MARGIN = 1,FUN=function(row){
+
+  max_od<-max(a[2:301])
+
+  if (max(row)>(max_od*0.5)){
+
+      cycle_to_max_od50<-min(which(row>max_od*0.5))
+
+  }else if (max(row<=(max_od*0.5))){
+
+      cycle_to_max_od50<-301
+
+  }
+
+  t_to_max_od50<-cycle_to_max_od50*15
+
+  return(t_to_max_od50)
+
+})
+
+  
+
+ggplot(a[which(a$conditions %in% c("0%", "1%", "1.50%", "1.75%", "2%")),])+geom_boxplot(aes(y=t_to_max_od50_ofWT,x=plasmid,color=conditions))+
+
+  ggtitle("GA trial PCA")+
+
+  ylab("time to reach half of maximum OD of all variants")
+
+
+```
+```{r}
+a$exp_slope<-apply(a[2:301],MARGIN = 1,FUN=function(row){
+
+  max_od<-max(a[2:301])
+
+  if (max(row)>(max_od*0.5)){
+
+      cycle_to_max_od50<-min(which(row>max_od*0.5))
+
+  }else if (max(row<=(max_od*0.5))){
+
+      cycle_to_max_od50<-301
+
+  }
+
+  
+
+  ts<-6
+
+  od_exprange<-log2(row[(cycle_to_max_od50-ts):(cycle_to_max_od50+ts)])
+
+  time<-0.25*seq(cycle_to_max_od50-ts,cycle_to_max_od50+ts,1)
+
+  fit<-lm(od_exprange ~ time)
+
+  slope<-as.numeric(fit$coefficients[2])
+
+  return(slope)
+
+})
+
+  
+
+ggplot(a[which(a$conditions %in% c("0%", "1%", "1.50%", "1.75%", "2%")),])+geom_boxplot(aes(y=exp_slope,x=plasmid,color=conditions))+
+
+  ggtitle("GA concentration trial PCA")+
+
+  ylab("exponential growth slope (h-1)")
+```
+
+```{r}
+p1a <-  a.mlt[a.mlt$conditions %in% c("0%", "1%", "1.50%", "1.75%", "2%"), ] 
+  aes(x=time, y=OD, group=well, color=conditions)
+) + 
+
+  geom_line(aes(color=plasmid)) +
+
+  xlab("time (h)") + ylab("OD600") +
+
+  ggtitle("gal") + ylim(-0.5,3)
+
+p1a
+
+p1a <- ggplot(a.mlt[a.mlt$conditions == "0%", ], aes(x=time, y=log2(value*10), group=well)) + 
+
+  geom_line(aes(color=plasmid)) +
+
+  xlab("time (h)") + ylab("OD600") +
+
+  ggtitle("GA 5 uM") + ylim(-0.5,3)
+
+p1a
+
+p1a <- ggplot(a.mlt[a.mlt$conditions == "1%", ], aes(x=time, y=log2(value*10), group=well)) + 
+
+  geom_line(aes(color=plasmid)) +
+
+  xlab("time (h)") + ylab("OD600") +
+
+  ggtitle("GA 50 uM")+ ylim(-0.5,3)
+
+p1a
+
+p1a <- ggplot(a.mlt[a.mlt$conditions == "2%", ], aes(x=time, y=log2(value*10), group=well)) + 
+
+  geom_line(aes(color=plasmid)) +
+
+  xlab("time (h)") + ylab("OD600") +
+
+  ggtitle("GA 200 uM")+ ylim(-0.5,3)
+
+p1a
+```

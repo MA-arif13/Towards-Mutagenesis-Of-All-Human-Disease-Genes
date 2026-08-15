@@ -1,0 +1,1508 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-10-22"
+---
+
+```{r setup}
+library(ggplot2)
+library(gdata)
+library(reshape2)
+library(gridExtra)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(data.table)
+library(VennDiagram)
+library(ggvenn)
+theme_set(theme_classic())
+```
+
+```{r wd}
+setwd("C:/Users/HP/Documents/r")
+```
+ 
+```{r go code}
+
+
+aa <- c("A","R","N","D","C","E","Q","G","H","I",
+        "L","K","M","F","P","S","T","W","Y","V","*")
+
+# Read input file (adjust header=TRUE if needed)
+library_info <- read.table("20240527_domainome_WT_screen_400-600_FINAL.txt",
+                sep = "\t", header = FALSE, stringsAsFactors = FALSE)
+```
+
+```{r complete library making}
+complete_library <- library_info %>%
+  crossing(replacement = aa) %>%
+  rowwise() %>%  
+  mutate(V3_mut = gsub("X", replacement, V3, fixed = TRUE)) %>%
+  ungroup() %>%  # reset rowwise grouping
+  mutate(variant_ID = paste0(V2, "_", replacement)) %>%
+  select(variant_ID, everything())
+
+print(complete_library)
+
+```
+```{r RData dim sum analysis loading }
+m<- load("Fpilot_aPCA_barcodes_agg_fitness_replicates.RData")
+print(m)
+
+
+dimsum <- as.data.table(all_variants)
+```
+
+```{r merging designed to dimsum w.r.t aaseq_ }
+merged_dimsum <- merge(
+  complete_library, 
+  dimsum, 
+  by.x = "V3_mut", 
+  by.y = "aa_seq", 
+
+)
+```
+
+```{r venn diagram based on mean_count of DimSum and the merged Dimsum-designed table.   to find how many have a mean count in non designated variants}
+dimsum_venn <- dimsum %>%
+  filter(mean_count > 0) %>%
+  pull(aa_seq)
+
+merged_dimsum_venn <- merged_dimsum %>%
+  filter(mean_count > 0) %>%
+  pull(V3_mut)
+
+
+venn_list <- list(
+  experimental = dimsum_venn,
+  observed= merged_dimsum_venn
+)
+
+ggvenn(
+  venn_list,
+  fill_color = c("skyblue", "orange"),
+  stroke_size = 0.5,
+  set_name_size = 6
+)
+ggsave("venn_ggplot.png", widimsumh = 6, height = 6)
+```
+
+```{r venn based on sequecning results of designed and the dimsum results directly }
+designed_seqs <- complete_library %>%
+  pull(V3_mut) %>%          
+  gsub("\\*", "", .)        
+
+
+observed_seqs <- dimsum %>%
+  pull(aa_seq) %>%          
+  gsub("\\*", "", .)  
+
+venn_list <- list(
+  "Designed library" = designed_seqs,
+  "Observed library in DIMsum" = observed_seqs
+)
+
+ggvenn(
+  venn_list,
+  fill_color = c("skyblue", "orange"),
+  stroke_size = 0.5,
+  set_name_size = 6
+)
+
+ggsave("designed_vs_observed_venn.png", widimsumh = 6, height = 6)
+```
+
+```{r to report the count of  designed variants and the non-designed }
+
+complete_library_rep <- complete_library %>%
+  mutate(V3_mut = gsub("\\*$", "", V3_mut))
+
+dimsum_rep <- dimsum %>%
+  mutate(aa_seq = gsub("\\*$", "", aa_seq))
+
+
+
+dimsum_rep <- dimsum_rep %>%
+  mutate(
+    design_status = if_else(aa_seq %in% complete_library_rep$V3_mut, "Designed", "Non-designed")
+  )
+
+# 1️⃣ Number of variants by type
+variant_counts <- dimsum_rep %>%
+  group_by(design_status) %>%
+  summarise(num_variants = n())
+
+# 2️⃣ Sum of mean_count (replace with the correct column if needed)
+count_summary <- dimsum_rep %>%
+  group_by(design_status) %>%
+  summarise(total_mean_count = sum(mean_count, na.rm = TRUE))
+
+# 3️⃣ Combine both summaries
+report_table <- left_join(variant_counts, count_summary, by = "design_status")
+
+report_table
+
+report_table <- report_table %>%
+  mutate(
+    frac_variants = num_variants / sum(num_variants),
+    frac_counts = total_mean_count / sum(total_mean_count)
+  )
+
+
+
+# Define your sets
+designed <- unique(complete_library_rep$V3_mut)
+observed <- unique(dimsum_rep$aa_seq)
+
+# Calculate overlap
+intersection <- intersect(designed, observed)
+
+# Draw Venn diagram
+venn.plot <- draw.pairwise.venn(
+  area1 = length(designed),
+  area2 = length(observed),
+  cross.area = length(intersection),
+  category = c("Designed variants", "Observed variants"),
+  fill = c("skyblue", "orange"),
+  lty = "blank",
+  cex = 2,
+  cat.cex = 1.5
+)
+
+# Plot it
+grid.newpage()
+grid.draw(venn.plot)
+
+```
+
+```{r}
+
+# Summarize counts by design status
+count_summary <- dimsum_rep %>%
+  group_by(design_status) %>%
+  summarise(
+    num_variants = n(),
+    total_mean_count = sum(mean_count, na.rm = TRUE),
+    mean_of_mean_count = mean(mean_count, na.rm = TRUE),
+    median_of_mean_count = median(mean_count, na.rm = TRUE)
+  ) %>%
+  mutate(
+    fraction_variants = num_variants / sum(num_variants),
+    fraction_counts = total_mean_count / sum(total_mean_count)
+  )
+
+count_summary
+
+ggplot(dimsum_rep, aes(x = mean_count, fill = design_status)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  scale_x_log10() +
+  labs(
+    title = "Distribution of Variant Counts",
+    x = "Mean count (log scale)",
+    y = "Number of variants",
+    fill = "Design status"
+  ) +
+  theme_minimal(base_size = 14)
+
+
+
+dimsum_rep %>%
+
+  
+    group_by(design_status) %>%
+  summarise(
+    min_count = min(mean_count, na.rm = TRUE),
+    q1 = quantile(mean_count, 0.25, na.rm = TRUE),
+    median = median(mean_count, na.rm = TRUE),
+    q3 = quantile(mean_count, 0.75, na.rm = TRUE),
+    max_count = max(mean_count, na.rm = TRUE)
+  )
+```
+```{r creating a column for annoting wild type entries}
+
+
+merged_dimsum <- merged_dimsum %>%
+  mutate(
+    # extract original AA (before the number)
+    original_aa = str_match(variant_ID, "_([A-Z])\\d")[,2],
+    
+    # extract mutant AA (after the last underscore)
+    mutant_aa   = str_extract(variant_ID, "(?<=_)[:upper:]+$"),
+    
+    # wild-type = mutant AA == original AA
+    is_wildtype = mutant_aa == original_aa
+  )
+
+```
+
+```{r annoting stop codon }
+merged_dimsum <- merged_dimsum %>%
+  mutate(
+    has_stop_codon = str_detect(V3_mut, "\\*"),  # TRUE/FALSE if '*' exists
+    stop_pos = ifelse(has_stop_codon,
+                      str_locate(V3_mut, "\\*")[, 1],  # position of stop codon
+                      NA_integer_)
+  )
+merged_dimsum <- merged_dimsum %>%
+  mutate(
+    stable_ID = str_extract(variant_ID, "^[^_]+")  # everything before first "_"
+  )
+
+
+
+```
+
+```{r}
+# 1️⃣ Extract position
+t_test <- merged_dimsum %>%
+  mutate(
+    position = as.numeric(str_match(variant_ID, "_[A-Z](\\d+)")[,2])
+  )
+
+# 2️⃣ Compute WT fitness/sigma per stable_ID and position
+wt_df <- t_test %>%
+  filter(is_wildtype) %>%
+  group_by(stable_ID, position) %>%
+  summarise(
+    fitness_wt = mean(fitness, na.rm = TRUE),
+    sigma_wt   = mean(sigma, na.rm = TRUE),  # ⚠️ replace `sigma` with your SD col name if different
+    .groups = "drop"
+  )
+
+# 3️⃣ Join WT info back to all variants
+t_test <- t_test %>%
+  left_join(wt_df, by = c("stable_ID", "position"))
+
+# 4️⃣ Compute t-statistic and two-tailed p-value (df = 4 or use your replicate df)
+t_test <- t_test %>%
+  mutate(
+    t_stat  = (fitness - fitness_wt) / sqrt(sigma^2 + sigma_wt^2),
+    p_value = 2 * (1 - pt(abs(t_stat), df = 4))
+  )
+
+# 5️⃣ Flag significant results (p < 0.05)
+t_test <- t_test %>%
+  mutate(significant = p_value < 0.05)
+
+# 6️⃣ Inspect results
+t_test %>%
+  select(stable_ID, variant_ID, position, fitness, fitness_wt, sigma, sigma_wt, t_stat, p_value, significant) %>%
+  head()
+```
+```{r}
+
+names(t_test)
+
+
+
+```
+```{r}
+summary_counts <- t_test %>%
+  summarise(
+    total_wildtypes   = sum(is_wildtype, na.rm = TRUE),
+    total_stop_codons = sum(has_stop_codon, na.rm = TRUE),
+    total_significant_true  = sum(significant, na.rm = TRUE),
+    total_significant_false = sum(!significant, na.rm = TRUE)
+  )
+
+summary_counts
+```
+```{r}
+ggplot(t_test, aes(x = fitness_wt, y = fitness, color = significant)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_color_manual(values = c("grey60", "orange")) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  labs(
+    title = "Mutant vs Wild-Type Fitness",
+    x = "Wild-Type Fitness",
+    y = "Mutant Fitness",
+    color = "Significant"
+  ) +
+  theme_minimal(base_size = 14)
+```
+```{r }
+
+
+summary_df <- t_test %>%
+  group_by(significant) %>%
+  summarise(count = n(), .groups = "drop")
+
+# Plot
+ggplot(summary_df, aes(x = significant, y = count, fill = significant)) +
+  geom_col() +
+  scale_fill_manual(values = c("skyblue", "orange")) +
+  labs(
+    title = "Number of Variants by Significance",
+    x = "Significant",
+    y = "Number of Variants"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+```
+```{r}
+
+# Make a category column for plotting
+t_test_plot <- t_test %>%
+  mutate(category = case_when(
+    is_wildtype ~ "Wild Type",
+    has_stop_codon ~ "Stop Codon",
+    TRUE ~ "Mutant"
+  ))
+
+# Plot density distributions of fitness
+ggplot(t_test_plot, aes(x = fitness, fill = category)) +
+  geom_density(alpha = 0.4) +
+  labs(
+    title = "Fitness Distribution: Wild Type vs Mutants vs Stop Codons",
+    x = "Fitness",
+    y = "Density",
+    fill = "Variant Type"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+t_test_plot <- t_test_plot %>%
+  mutate(
+    fitness = -fitness,
+    fitness_wt = -fitness_wt,
+    category = case_when(
+      is_wildtype ~ "Wild Type",
+      has_stop_codon ~ "Stop Codon",
+      TRUE ~ "Mutant"
+    )
+  )
+ggplot(t_test_plot, aes(x = fitness, fill = category)) +
+  geom_density(alpha = 0.4) +
+  labs(
+    title = "Fitness Distribution: Wild Type vs Mutants vs Stop Codons",
+    x = "Fitness",
+    y = "Density",
+    fill = "Variant Type"
+  ) +
+ 
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+```{r}
+t_test_plot <- t_test_plot %>%
+  mutate(
+    fitness = -fitness,
+    fitness_wt = -fitness_wt,
+    category = case_when(
+      is_wildtype ~ "Wild Type",
+      has_stop_codon ~ "Stop Codon",
+      TRUE ~ "Mutant"
+    )
+  )
+
+# Scatter plot with inverted fitness
+ggplot(t_test_plot, 
+       aes(x = fitness_wt, y = fitness, 
+           color = category, shape = significant)) +
+  geom_point(alpha = 0.7, size = 2.5) +
+  scale_color_manual(values = c("Wild Type" = "blue",
+                                "Mutant" = "orange", 
+                                "Stop Codon" = "red")) +
+  scale_shape_manual(values = c(`FALSE` = 16, `TRUE` = 17)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+  labs(
+    title = "Mutant vs Wild-Type Fitness (Inverted Scale)",
+    x = "Wild-Type Fitness (Inverted)",
+    y = "Mutant / Stop Codon Fitness (Inverted)",
+    color = "Variant Type",
+    shape = "Significant"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "top")
+```
+
+
+```{r}
+t_test_plot <- t_test_plot %>%
+  mutate(
+    fitness = -fitness,
+    fitness_wt = -fitness_wt,
+    category = case_when(
+      is_wildtype ~ "Wild Type",
+      has_stop_codon ~ "Stop Codon",
+      TRUE ~ "Mutant"
+    ),
+    color_group = case_when(
+      category == "Wild Type" & !significant ~ "WT (blue)",
+      category == "Wild Type" &  significant ~ "WT (black)",
+      category == "Mutant"    & !significant ~ "Mutant (yellow)",
+      category == "Mutant"    &  significant ~ "Mutant (orange)",
+      category == "Stop Codon" & !significant ~ "Stop Codon (red)",
+      category == "Stop Codon" &  significant ~ "Stop Codon (pink)"
+    )
+  )
+
+# Scatter plot with inverted fitness and custom colors
+ggplot(t_test_plot, 
+       aes(x = fitness_wt, y = fitness, color = color_group)) +
+  geom_point(alpha = 0.8, size = 2.5, shape = 16) +
+  scale_color_manual(
+    values = c(
+      "WT (blue)" = "blue",
+      "WT (black)" = "black",
+      "Mutant (yellow)" = "yellow",
+      "Mutant (orange)" = "orange",
+      "Stop Codon (red)" = "red",
+      "Stop Codon (violet)" = "violet"
+    ),
+    name = "Variant Type & Significance"
+  ) +
+  geom_abline(intercept = 0, slope = 1, 
+              linetype = "dashed", color = "grey40") +
+  labs(
+    title = "Mutant vs Wild-Type Fitness (Inverted Scale)",
+    x = "Wild-Type Fitness (Inverted)",
+    y = "Mutant / Stop Codon Fitness (Inverted)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+print(t_test_plot)
+
+# ggsave(
+#   filename = "mutant_vs_wt_fitness_scatter1.png",
+#   plot = t_test_plot,
+#   width = 12, height = 8, dpi = 300
+# )
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# 1️⃣ Add a column for WT – Mutant fitness difference
+t_test <- t_test %>%
+  mutate(
+    fitness_diff = fitness_wt - fitness  # difference between WT and variant
+  )
+
+# 2️⃣ Categorize variants
+t_test <- t_test %>%
+  mutate(
+    category = case_when(
+      is_wildtype ~ "Wild Type",
+      has_stop_codon ~ "Stop Codon",
+      TRUE ~ "Mutant"
+    )
+  )
+
+# 3️⃣ Summarize statistics for each category
+fitness_diff_summary <- t_test %>%
+  group_by(category) %>%
+  summarise(
+    mean_diff = mean(fitness_diff, na.rm = TRUE),
+    median_diff = median(fitness_diff, na.rm = TRUE),
+    sd_diff = sd(fitness_diff, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  )
+
+print(fitness_diff_summary)
+
+# 4️⃣ Bar plot of mean fitness difference (with SD error bars)
+p_bar <- ggplot(fitness_diff_summary, aes(x = category, y = mean_diff, fill = category)) +
+  geom_col(alpha = 0.8) +
+  geom_errorbar(aes(ymin = mean_diff - sd_diff, ymax = mean_diff + sd_diff), width = 0.2) +
+  labs(
+    title = "Mean (WT – Mutant) Fitness Difference per Variant Type",
+    x = "Variant Type",
+    y = "Mean Fitness Difference (WT – Variant)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(p_bar)
+
+# 5️⃣ Violin plot of all fitness differences
+p_violin <- ggplot(t_test, aes(x = category, y = fitness_diff, fill = category)) +
+  geom_violin(trim = FALSE, alpha = 0.6) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, color = "black", alpha = 0.5) +
+  labs(
+    title = "Distribution of (WT – Mutant) Fitness Differences",
+    x = "Variant Type",
+    y = "Fitness Difference (WT – Variant)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+print(p_violin)
+
+# 6️⃣ Save the plots
+ggsave("fitness_diff_barplot.png", plot = p_bar, width = 8, height = 6, dpi = 300)
+ggsave("fitness_diff_violinplot.png", plot = p_violin, width = 8, height = 6, dpi = 300)
+
+
+
+```
+```{r PFAM ID add}
+library(dplyr)
+library(ggplot2)
+library(purrr)
+
+# 1️⃣ Count number of wild-types per Pfam
+pfam_counts <- violin_wt %>%
+  group_by(Pfam_ID) %>%
+  summarise(num_variants = n(), .groups = "drop")
+
+# 2️⃣ Keep only Pfams with >= 4 wild-types
+valid_pfams <- pfam_counts %>%
+  filter(num_variants >= 4) %>%
+  pull(Pfam_ID)
+
+violin_wt_filtered <- violin_wt %>%
+  filter(Pfam_ID %in% valid_pfams)
+
+# 3️⃣ Determine number of plots you want (for example, 5)
+num_plots <- 5
+
+# 4️⃣ Split Pfams almost evenly across plots
+pfam_list <- unique(violin_wt_filtered$Pfam_ID)
+chunks <- split(pfam_list, cut(seq_along(pfam_list), breaks = num_plots, labels = FALSE))
+
+# 5️⃣ Function to plot one chunk of Pfams
+plot_violin_chunk <- function(pfam_subset, chunk_num) {
+  
+  df_chunk <- violin_wt_filtered %>%
+    filter(Pfam_ID %in% pfam_subset)
+  
+  p <- ggplot(df_chunk, aes(x = Pfam_ID, y = fitness, fill = Pfam_ID)) +
+    geom_violin(trim = FALSE, alpha = 0.7) +
+    geom_boxplot(width = 0.1, color = "black", alpha = 0.5, outlier.shape = NA) +
+    labs(
+      title = paste("Wild-Type Fitness by Pfam ID (Set", chunk_num, ")"),
+      x = "Pfam ID",
+      y = "Fitness",
+      fill = "Pfam ID"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 6),
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5)
+    )
+  
+  # Save plot
+  filename <- paste0("wildtype_fitness_violin_set_", chunk_num, ".png")
+  ggsave(filename, plot = p, width = 12, height = 6, dpi = 300)
+  
+  return(p)
+}
+
+# 6️⃣ Generate plots for all chunks
+plots <- imap(chunks, plot_violin_chunk)
+
+# 7️⃣ Display first plot as a check
+plots[[1]]
+
+
+
+```
+```{r}
+# library(dplyr)
+# library(ggplot2)
+# library(purrr)
+# 
+# # Split wild-types by Pfam
+# wt_groups <- violin_wt %>%
+#   group_by(Pfam_ID) %>%
+#   group_split()
+# 
+# # Sample up to 100 variants per Pfam
+# wt_sampled <- map_df(wt_groups, ~ {
+#   if (nrow(.x) > 100) {
+#     .x %>% slice_sample(n = 100)
+#   } else {
+#     .x
+#   }
+# })
+# 
+# # Violin plot: X = Pfam ID, Y = fitness
+# p_violin <- ggplot(wt_sampled, aes(x = Pfam_ID, y = fitness, fill = Pfam_ID)) +
+#   geom_violin(trim = FALSE, alpha = 0.7) +
+#   geom_boxplot(width = 0.1, color = "black", alpha = 0.5, outlier.shape = NA) +
+#   labs(
+#     title = "Wild-Type Fitness Distribution by Pfam ID (Max 100 per Pfam)",
+#     x = "Pfam ID",
+#     y = "Fitness",
+#     fill = "Pfam ID"
+#   ) +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+#     legend.position = "none",
+#     plot.title = element_text(hjust = 0.5)
+#   )
+# 
+# # Display the plot
+# print(p_violin)
+# 
+# # Save the plot
+# ggsave("wildtype_fitness_violin_by_Pfam_sample100.png", plot = p_violin, width = 10, height = 6, dpi = 300)
+
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(purrr)
+
+# 1️⃣ Filter Pfams with > 4 variants
+pfam_counts <- violin_wt %>%
+  group_by(Pfam_ID) %>%
+  summarise(num_variants = n(), .groups = "drop") %>%
+  filter(num_variants > 4)
+
+# Keep only these Pfams
+violin_filtered <- violin_wt %>%
+  filter(Pfam_ID %in% pfam_counts$Pfam_ID)
+
+# 2️⃣ Split Pfams into chunks for multiple plots
+num_plots <- 3  # You can adjust number of plots
+pfam_list <- unique(violin_filtered$Pfam_ID)
+pfam_chunks <- split(pfam_list, cut(seq_along(pfam_list), num_plots, labels = FALSE))
+
+# 3️⃣ Generate a plot for each chunk
+plots <- map2(pfam_chunks, seq_along(pfam_chunks), ~ {
+  chunk_data <- violin_filtered %>% filter(Pfam_ID %in% .x)
+  
+  ggplot(chunk_data, aes(x = Pfam_ID, y = fitness, fill = Pfam_ID)) +
+    geom_violin(trim = FALSE, alpha = 0.7) +
+    geom_boxplot(width = 0.1, color = "black", alpha = 0.5, outlier.shape = NA) +
+    labs(
+      title = paste("Wild-Type Fitness Distribution by Pfam (Plot", .y, ")"),
+      x = "Pfam ID",
+      y = "Fitness",
+      fill = "Pfam ID"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5)
+    )
+})
+
+# 4️⃣ Display plots
+plots[[1]]  # first plot
+plots[[2]]  # second plot
+plots[[3]]  # third plot (adjust based on num_plots)
+
+# Optionally save each plot
+walk2(plots, seq_along(plots), ~ ggsave(paste0("violin_wt_Pfam_plot_", .y, ".png"), plot = .x, width = 10, height = 6, dpi = 300))
+
+
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+library(purrr)
+
+# 1️⃣ Filter Pfams with > 4 variants
+pfam_counts <- violin_wt %>%
+  group_by(Pfam_ID) %>%
+  summarise(num_variants = n(), .groups = "drop") %>%
+  filter(num_variants > 4)
+
+# Keep only these Pfams
+violin_filtered <- violin_wt %>%
+  filter(Pfam_ID %in% pfam_counts$Pfam_ID) %>%
+  mutate(inverted_fitness = -fitness)  # invert fitness
+
+# 2️⃣ Split Pfams into chunks for multiple plots
+num_plots <- 3  # Adjust as needed
+pfam_list <- unique(violin_filtered$Pfam_ID)
+pfam_chunks <- split(pfam_list, cut(seq_along(pfam_list), num_plots, labels = FALSE))
+
+# 3️⃣ Generate a plot for each chunk
+plots <- map2(pfam_chunks, seq_along(pfam_chunks), ~ {
+  chunk_data <- violin_filtered %>% filter(Pfam_ID %in% .x)
+  
+  ggplot(chunk_data, aes(x = Pfam_ID, y = inverted_fitness, fill = Pfam_ID)) +
+    geom_violin(trim = FALSE, alpha = 0.7) +
+    geom_boxplot(width = 0.1, color = "black", alpha = 0.5, outlier.shape = NA) +
+    labs(
+      title = paste("Wild-Type Fitness Distribution by Pfam (Inverted, Plot", .y, ")"),
+      x = "Pfam ID",
+      y = "Inverted Fitness",
+      fill = "Pfam ID"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5)
+    )
+})
+
+# 4️⃣ Display plots
+plots[[1]]  # first plot
+plots[[2]]  # second plot
+plots[[3]]  # third plot (adjust based on num_plots)
+
+# 5️⃣ Optionally save each plot
+walk2(plots, seq_along(plots), ~ ggsave(paste0("violin_wt_Pfam_plot_inverted_", .y, ".png"), plot = .x, width = 10, height = 6, dpi = 300))
+
+```
+
+
+```{r new t_teest }
+# t_test <- t_test %>%
+#   mutate(neg_fitness = -fitness)
+# t_test_neg <- t_test %>%
+#   mutate(neg_fitness = -fitness)
+# t_test_neg <- t_test_neg %>%
+#   mutate(neg_wt_fitness = -fitness_wt)
+# 
+# ```
+# ```{r}
+# # Ensure wt_minus_mut column exists
+# t_test <- t_test %>%
+#   mutate(wt_minus_mut = fitness_wt - fitness)
+# 
+# # Categorize difference
+# t_test_summary_sig <- t_test %>%
+#   mutate(
+#     diff_category = case_when(
+#       wt_minus_mut < 0  ~ "Negative",
+#       wt_minus_mut == 0 ~ "Zero",
+#       wt_minus_mut > 0  ~ "Positive"
+#     )
+#   ) %>%
+#   group_by(significant, diff_category) %>%
+#   summarise(num_variants = n(), .groups = "drop") %>%
+#   arrange(significant, diff_category)
+# 
+# # View the table
+# t_test_summary_sig
+# 
+
+```
+
+```{r}
+
+# Prepare plotting dataframe
+t_test_plot <- t_test_neg %>%
+  mutate(
+    wt_minus_mut = fitness_wt - fitness,
+    diff_category = case_when(
+      wt_minus_mut == 0 ~ "Wild Type",
+      wt_minus_mut < 0  ~ "Negative (mutant fitter than WT)",
+      wt_minus_mut > 0  ~ "Positive (mutant less fit than WT)"
+    ),
+    color_group = case_when(
+      diff_category == "Wild Type" & !significant ~ "WT (blue)",
+      diff_category == "Wild Type" & significant  ~ "WT (black)",
+      diff_category == "Negative (mutant fitter than WT)" & !significant ~ "Mutant (yellow)",
+      diff_category == "Negative (mutant fitter than WT)" & significant ~ "Mutant (orange)",
+      diff_category == "Positive (mutant less fit than WT)" & !significant ~ "Mutant (red)",
+      diff_category == "Positive (mutant less fit than WT)" & significant ~ "Mutant (pink)"
+    )
+  )
+
+# Scatter plot
+ggplot(t_test_plot, aes(x = 0, y = wt_minus_mut, color = color_group)) +
+  geom_point(alpha = 0.8, size = 2.5, shape = 16, position = position_jitter(width = 0.2)) +
+  scale_color_manual(
+    values = c(
+      "WT (blue)" = "blue",
+      "WT (black)" = "black",
+      "Mutant (yellow)" = "yellow",
+      "Mutant (orange)" = "orange",
+      "Mutant (red)" = "red",
+      "Mutant (pink)" = "pink"
+    ),
+    name = "Variant Type & Significance"
+  ) +
+  labs(
+    title = "Fitness Difference Relative to Wild-Type",
+    x = "Wild-Type Reference",
+    y = "Fitness Difference (WT - Mutant)",
+    caption = "Negative = mutant fitter than WT, Positive = mutant less fit than WT"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+`
+
+```
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(purrr)
+
+# 1️⃣ Filter only wild-type variants
+wt_data <- t_test %>%
+  filter(is_wildtype) %>%
+  mutate(variant_label = variant_ID)
+
+# Check number of wild types
+num_wt <- nrow(wt_data)
+cat("Total wild-type variants:", num_wt, "\n")
+
+# 2️⃣ Split into chunks of 100 variants each
+wt_chunks <- split(wt_data, ceiling(seq_along(1:nrow(wt_data)) / 100))
+
+# 3️⃣ Function to make a violin plot for a chunk
+plot_violin_chunk <- function(df, chunk_num) {
+  p <- ggplot(df, aes(x = variant_label, y = fitness, fill = variant_label)) +
+    geom_violin(trim = FALSE, alpha = 0.7) +
+    geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, alpha = 0.5) +
+    labs(
+      title = paste("Wild-Type Fitness Distribution (Set", chunk_num, ")"),
+      x = "Wild-Type Variant",
+      y = "Fitness"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 6)
+    )
+  
+  # Save each plot
+  #filename <- paste0("wildtype_fitness_violin_set_", chunk_num, ".png")
+  #ggsave(filename, plot = p, width = 12, height = 6, dpi = 300)
+  
+  return(p)
+}
+
+# 4️⃣ Generate and save all plots
+plots <- imap(wt_chunks, plot_violin_chunk)
+
+# Display the first plot
+plots[[1]]
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# 1️⃣ Filter only wild-type variants
+wt_data <- t_test %>%
+  filter(is_wildtype) %>%
+  mutate(variant_label = variant_ID)
+
+cat("Total wild-type variants:", nrow(wt_data), "\n")
+
+# 2️⃣ (Optional) Order variants by median fitness — makes the plot much clearer
+wt_data <- wt_data %>%
+  group_by(variant_label) %>%
+  mutate(median_fitness = median(fitness, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(median_fitness) %>%
+  mutate(variant_label = factor(variant_label, levels = unique(variant_label)))
+
+# 3️⃣ Create violin plot for all WT variants
+p_all_wt <- ggplot(wt_data, aes(x = variant_label, y = fitness, fill = variant_label)) +
+  geom_violin(trim = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, alpha = 0.5) +
+  labs(
+    title = "Fitness Distribution of All Wild-Type Variants",
+    x = "Wild-Type Variant",
+    y = "Fitness"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 5),
+    axis.text.y = element_text(size = 10)
+  )
+
+# 4️⃣ Display the plot
+print(p_all_wt)
+
+# 5️⃣ Save the plot as one large, high-resolution image
+#ggsave(
+ # filename = "all_wildtype_fitness_violin_single.png",
+  #plot = p_all_wt,
+  #width = 20,   # wide enough for many variants
+  #height = 8,
+  #dpi = 300
+)
+
+```
+```{r}
+# Filter only significant variants below diagonal
+below_diag_sig <- below_diag %>%
+  filter(significant == TRUE)
+
+ggplot(below_diag_sig, aes(x = mutant_aa, y = 1)) +
+  geom_jitter(width = 0.2, height = 0.1, alpha = 0.6, color = "steelblue") +
+  stat_summary(fun = "length", geom = "text",
+               aes(label = ..y..), vjust = -1, color = "black") +
+  labs(
+    title = "Distribution of Significant Mutant Amino Acids (Below Diagonal)",
+    x = "Mutant Amino Acid",
+    y = "Number of Significant Variants (Jittered)"
+  ) +
+  theme_minimal(base_size = 14)
+ggplot(below_diag_sig, aes(x = mutant_aa, y = fitness)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7, outlier.alpha = 0.4) +
+  labs(
+    title = "Fitness of Significant Variants Below Diagonal",
+    x = "Mutant Amino Acid",
+    y = "Fitness (Inverted Scale)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+below_diag_sig <- below_diag_sig %>%
+  mutate(fitness_diff = fitness - fitness_wt)  # negative = below diagonal
+
+ggplot(below_diag_sig, aes(x = mutant_aa, y = fitness_diff)) +
+  geom_boxplot(fill = "coral", alpha = 0.7, outlier.alpha = 0.4) +
+  labs(
+    title = "Fitness Difference (Mutant − WT) for Significant Variants Below Diagonal",
+    x = "Mutant Amino Acid",
+    y = "Fitness Difference"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+```{r}
+
+library(dplyr)
+
+# Filter significant variants below the diagonal
+below_diag_sig <- below_diag %>%
+  filter(significant == TRUE)
+
+# Count number of significant variants per mutant amino acid
+aa_counts_table <- below_diag_sig %>%
+  group_by(mutant_aa) %>%
+  summarise(num_significant = n()) %>%
+  arrange(desc(num_significant))
+
+# View the table
+print(aa_counts_table)
+
+
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Create bar plot
+ggplot(aa_counts_table, aes(x = reorder(mutant_aa, -num_significant), y = num_significant)) +
+  geom_col(fill = "coral", alpha = 0.8) +
+  labs(
+    title = "Number of Significant Variants Below Diagonal by Mutant Amino Acid",
+    x = "Mutant Amino Acid",
+    y = "Number of Significant Variants"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+```{r}
+library(dplyr)
+
+# Count number of variants below diagonal per mutant amino acid (all, no significance filter)
+aa_counts_all <- below_diag %>%
+  group_by(mutant_aa) %>%
+  summarise(num_variants = n()) %>%
+  arrange(desc(num_variants))
+
+# View the table
+print(aa_counts_all)
+
+library(ggplot2)
+library(dplyr)
+
+# Bar plot of all variants below the diagonal
+ggplot(aa_counts_all, aes(x = reorder(mutant_aa, -num_variants), y = num_variants)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  labs(
+    title = "Number of Variants Below Diagonal by Mutant Amino Acid (All Variants)",
+    x = "Mutant Amino Acid",
+    y = "Number of Variants"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+```
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Subset only wild-type variants
+wt_variants <- t_test_plot %>%
+  filter(is_wildtype)
+
+# Create violin plot
+wt_violin <- ggplot(wt_variants, aes(x = variant_ID, y = fitness)) +
+  geom_violin(fill = "skyblue", alpha = 0.7, color = "black") +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  labs(
+    title = "Fitness Distribution of Individual Wild-Type Variants",
+    x = "Variant ID",
+    y = "Fitness (Inverted Scale)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)
+  )
+
+
+
+
+# Save as PNG
+#ggsave(
+ # filename = "wildtype_violin_plot1.png",
+  #plot = wt_violin,
+  #width = 44,       # width in inches
+  #height = 35,       # height in inches
+  #dpi = 300         # high-resolution for publication
+#)
+
+
+```
+
+```{r}
+# Install if not already installed
+install.packages("patchwork")
+
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(patchwork)
+
+# Subset wild-type variants
+wt_variants <- t_test_plot %>%
+  filter(is_wildtype) %>%
+  mutate(group_id = str_sub(variant_ID, 1, 4))  # extract first 4 letters
+
+# Get unique groups
+groups <- unique(wt_variants$group_id)
+
+# Create an empty list to store plots
+plot_list <- list()
+
+# Loop over each group and create a violin plot
+for(g in groups){
+  df_group <- wt_variants %>% filter(group_id == g)
+  
+  p <- ggplot(df_group, aes(x = variant_ID, y = fitness)) +
+    geom_violin(fill = "skyblue", alpha = 0.7, color = "black") +
+    geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+    labs(
+      title = paste0("Group ", g),
+      x = "Variant ID",
+      y = "Fitness"
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)
+    )
+  
+  plot_list[[g]] <- p
+}
+# Combine all plots in a grid
+#combined_plot <- wrap_plots(plot_list, ncol = 2)  # adjust ncol as needed
+
+# Display the combined plot
+#print(combined_plot)
+
+# Save the combined image as PNG
+#ggsave(
+ # filename = "wildtype_violin_combined.png",
+  #plot = combined_plot,
+  #width = 20,  # adjust depending on number of plots
+  #height = 10,
+  #dpi = 300
+#)
+
+
+```
+
+```{r}
+
+# Add color_group column
+t_test_plot <- t_test_plot %>%
+  mutate(
+    fitness = -fitness,
+    fitness_wt = -fitness_wt,
+    category = case_when(
+      is_wildtype ~ "Wild Type",
+      has_stop_codon ~ "Stop Codon",
+      TRUE ~ "Mutant"
+    ),
+    color_group = case_when(
+      category == "Wild Type" & !significant ~ "WT (blue)",
+      category == "Wild Type" &  significant ~ "WT (black)",
+      category == "Mutant"    & !significant ~ "Mutant (yellow)",
+      category == "Mutant"    &  significant ~ "Mutant (orange)",
+      category == "Stop Codon" & !significant ~ "Stop Codon (red)",
+      category == "Stop Codon" &  significant ~ "Stop Codon (pink)"
+    )
+  )
+
+# Create the scatter plot
+fitness_scatter_plot <- ggplot(t_test_plot, 
+       aes(x = fitness_wt, y = fitness, color = color_group)) +
+  geom_point(alpha = 0.8, size = 2.5, shape = 16) +
+  scale_color_manual(
+    values = c(
+      "WT (blue)" = "blue",
+      "WT (black)" = "black",
+      "Mutant (yellow)" = "yellow",
+      "Mutant (orange)" = "orange",
+      "Stop Codon (red)" = "red",
+      "Stop Codon (pink)" = "pink"
+    ),
+    name = "Variant Type & Significance"
+  ) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey40") +
+  labs(
+    title = "Mutant vs Wild-Type Fitness (Inverted Scale)",
+    x = "Wild-Type Fitness (Inverted)",
+    y = "Mutant / Stop Codon Fitness (Inverted)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+
+# Display the plot
+print(fitness_scatter_plot)
+
+# Save the plot automatically
+ggsave(
+  filename = "mutant_vs_wt_fitness_scatter1.png",
+  plot = fitness_scatter_plot,
+  width = 12,
+  height = 8,
+  dpi = 300
+)
+
+```
+```{r}
+t_test_plot <- t_test_plot %>%
+  mutate(
+    category = case_when(
+      is_wildtype ~ "Wild Type",
+      has_stop_codon ~ "Stop Codon",
+      TRUE ~ "Mutant"
+    ),
+    color_group = case_when(
+      category == "Wild Type" & !significant ~ "WT (blue)",
+      category == "Wild Type" &  significant ~ "WT (black)",
+      category == "Mutant"    & !significant ~ "Mutant (yellow)",
+      category == "Mutant"    &  significant ~ "Mutant (orange)",
+      category == "Stop Codon" & !significant ~ "Stop Codon (red)",
+      category == "Stop Codon" &  significant ~ "Stop Codon (pink)"
+    )
+  )
+head(t_test_plot[, c("category", "color_group", "fitness", "fitness_wt")])
+
+fitness_scatter_plot <- ggplot(t_test_plot, 
+       aes(x = fitness_wt, y = fitness, color = color_group)) +
+  geom_point(alpha = 0.8, size = 2.5, shape = 16) +
+  scale_color_manual(
+    values = c(
+      "WT (blue)" = "blue",
+      "WT (black)" = "black",
+      "Mutant (yellow)" = "yellow",
+      "Mutant (orange)" = "orange",
+      "Stop Codon (red)" = "red",
+      "Stop Codon (pink)" = "pink"
+    ),
+    name = "Variant Type & Significance"
+  ) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "grey40") +
+  labs(
+    title = "Mutant vs Wild-Type Fitness (Inverted Scale)",
+    x = "Wild-Type Fitness (Inverted)",
+    y = "Mutant / Stop Codon Fitness (Inverted)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "top"
+  )
+
+# Save the plot
+ggsave(
+  filename = "mutant_vs_wt_fitness_scatter.png",
+  plot = fitness_scatter_plot,
+  width = 12, height = 8, dpi = 300
+)
+
+```
+```{r}
+# Categorize variants into groups: WT / Mutant / Stop
+t_test <- t_test %>%
+  mutate(
+    variant_type = case_when(
+      has_stop_codon ~ "Stop codon",
+      is_wildtype ~ "Wild type",
+      TRUE ~ "Mutant"
+    )
+  )
+
+# Plot histogram of fitness values (horizontal orientation)
+p_fitness_dist <- ggplot(t_test, aes(y = fitness, fill = variant_type)) +
+  geom_histogram(alpha = 0.6, position = "identity", bins = 50, orientation = "y") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Distribution of Fitness: WT vs Mutants vs Stop Codons",
+    y = "Fitness",
+    x = "Count",
+    fill = "Variant Type"
+  ) +
+  scale_fill_manual(values = c(
+    "Wild type" = "#4CAF50",     # green
+    "Mutant" = "#2196F3",        # blue
+    "Stop codon" = "#E53935"     # red
+  )) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "top"
+  )
+
+# Display the plot
+p_fitness_dist
+
+
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Categorize variants into WT / Mutant / Stop codon
+t_test <- t_test %>%
+  mutate(
+    variant_type = case_when(
+      has_stop_codon ~ "Stop codon",
+      is_wildtype ~ "Wild type",
+      TRUE ~ "Mutant"
+    )
+  )
+
+# Summarize counts per type
+variant_summary <- t_test %>%
+  group_by(variant_type) %>%
+  summarise(
+    n_variants = n(),
+    mean_fitness = mean(fitness, na.rm = TRUE),
+    median_fitness = median(fitness, na.rm = TRUE)
+  )
+
+# ✅ Bar plot showing number of variants
+p_variant_bar <- ggplot(variant_summary, aes(x = variant_type, y = n_variants, fill = variant_type)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  geom_text(aes(label = n_variants), vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c(
+    "Wild type" = "#4CAF50",     # green
+    "Mutant" = "#2196F3",        # blue
+    "Stop codon" = "#E53935"     # red
+  )) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Number of Variants by Type",
+    x = "Variant Type",
+    y = "Count of Variants",
+    fill = "Variant Type"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "none"
+  )
+
+# Show the bar plot
+p_variant_bar
+
+# Save the plot
+ggsave("barplot_variant_counts.png", plot = p_variant_bar, width = 7, height = 5, dpi = 300)
+
+```
+```{r}
+
+# Categorize variants into groups: WT / Mutant / Stop
+t_test <- t_test %>%
+  mutate(
+    variant_type = case_when(
+      has_stop_codon ~ "Stop codon",
+      is_wildtype ~ "Wild type",
+      TRUE ~ "Mutant"
+    )
+  )
+
+# Histogram: fitness vs count (number of variants)
+p_fitness_count <- ggplot(t_test, aes(x = fitness, fill = variant_type)) +
+  geom_histogram(alpha = 0.6, bins = 50, position = "identity") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Variant Count Distribution by Fitness",
+    x = "Fitness",
+    y = "Number of Variants",
+    fill = "Variant Type"
+  ) +
+  scale_fill_manual(values = c(
+    "Wild type" = "#4CAF50",     # green
+    "Mutant" = "#2196F3",        # blue
+    "Stop codon" = "#E53935"     # red
+  )) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "top"
+  )
+
+# Display the plot
+p_fitness_count
+
+# Save high-quality figure
+ggsave("variant_count_vs_fitness.png", plot = p_fitness_count, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+# Make a category column for plotting
+t_test_plot <- t_test_neg %>%
+  mutate(category = case_when(
+    is_wildtype ~ "Wild Type",
+    has_stop_codon ~ "Stop Codon",
+    TRUE ~ "Mutant"
+  ))
+
+# Plot density distributions of fitness
+ggplot(t_test_plot, aes(x = neg, fill = category)) +
+  geom_density(alpha = 0.4) +
+  labs(
+    title = "Fitness Distribution: Wild Type vs Mutants vs Stop Codons",
+    x = "Fitness",
+    y = "Density",
+    fill = "Variant Type"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+# Ensure wt_minus_mut and diff_category exist
+t_test <- t_test %>%
+  mutate(wt_minus_mut = fitness_wt - fitness,
+         diff_category = case_when(
+           wt_minus_mut < 0  ~ "Negative",
+           wt_minus_mut == 0 ~ "Zero",
+           wt_minus_mut > 0  ~ "Positive"
+         ))
+
+# Count unique domains per significant × diff_category
+unique_domains_summary <- t_test %>%
+  group_by(significant, diff_category) %>%
+  summarise(num_unique_domains = n_distinct(stable_ID), .groups = "drop") %>%
+  arrange(significant, diff_category)
+
+# View the table
+unique_domains_summary
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(purrr)
+
+# Count significant mutations per domain and exclude zeros
+sig_mutations_per_domain <- t_test %>%
+  group_by(stable_ID) %>%
+  summarise(
+    num_significant = sum(significant, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(num_significant > 0)
+
+# Split domains into chunks of 100
+domain_list <- unique(sig_mutations_per_domain$stable_ID)
+domain_chunks <- split(domain_list, ceiling(seq_along(domain_list)/100))
+
+# Generate and save a plot for each chunk
+plots <- map2(domain_chunks, seq_along(domain_chunks), ~ {
+  chunk_data <- sig_mutations_per_domain %>%
+    filter(stable_ID %in% .x)
+  
+  p <- ggplot(chunk_data, aes(x = reorder(stable_ID, -num_significant), y = num_significant)) +
+    geom_col(fill = "skyblue", color = "black") +
+    labs(
+      title = paste("Significant Mutations per Domain (Plot", .y, ")"),
+      x = "Domain (stable_ID)",
+      y = "Number of Significant Mutations (out of 21)"
+    ) +
+    scale_y_continuous(breaks = 0:21, limits = c(0, 21)) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      plot.title = element_text(hjust = 0.5)
+    )
+  
+  # Save each plot
+  ggsave(paste0("sig_mutations_per_domain_plot_", .y, ".png"), plot = p, width = 14, height = 6, dpi = 300)
+  
+  return(p)
+})
+
+# Display first plot as example
+plots[[1]]
+
+```
