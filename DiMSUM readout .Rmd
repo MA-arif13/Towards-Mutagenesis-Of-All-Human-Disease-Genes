@@ -127,17 +127,17 @@ dimsum_rep <- dimsum_rep %>%
     design_status = if_else(aa_seq %in% complete_library_rep$V3_mut, "Designed", "Non-designed")
   )
 
-# 1️⃣ Number of variants by type
+# Number of variants by type
 variant_counts <- dimsum_rep %>%
   group_by(design_status) %>%
   summarise(num_variants = n())
 
-# 2️⃣ Sum of mean_count (replace with the correct column if needed)
+# Sum of mean_count (replace with the correct column if needed)
 count_summary <- dimsum_rep %>%
   group_by(design_status) %>%
   summarise(total_mean_count = sum(mean_count, na.rm = TRUE))
 
-# 3️⃣ Combine both summaries
+#  Combine both summaries
 report_table <- left_join(variant_counts, count_summary, by = "design_status")
 
 report_table
@@ -253,38 +253,38 @@ merged_dimsum <- merged_dimsum %>%
 ```
 
 ```{r}
-# 1️⃣ Extract position
+# Extract position
 t_test <- merged_dimsum %>%
   mutate(
     position = as.numeric(str_match(variant_ID, "_[A-Z](\\d+)")[,2])
   )
 
-# 2️⃣ Compute WT fitness/sigma per stable_ID and position
+# Compute WT fitness/sigma per stable_ID and position
 wt_df <- t_test %>%
   filter(is_wildtype) %>%
   group_by(stable_ID, position) %>%
   summarise(
     fitness_wt = mean(fitness, na.rm = TRUE),
-    sigma_wt   = mean(sigma, na.rm = TRUE),  # ⚠️ replace `sigma` with your SD col name if different
+    sigma_wt   = mean(sigma, na.rm = TRUE),  # replace `sigma` with your SD col name if different
     .groups = "drop"
   )
 
-# 3️⃣ Join WT info back to all variants
+# Join WT info back to all variants
 t_test <- t_test %>%
   left_join(wt_df, by = c("stable_ID", "position"))
 
-# 4️⃣ Compute t-statistic and two-tailed p-value (df = 4 or use your replicate df)
+#  Compute t-statistic and two-tailed p-value (df = 4 or use your replicate df)
 t_test <- t_test %>%
   mutate(
     t_stat  = (fitness - fitness_wt) / sqrt(sigma^2 + sigma_wt^2),
     p_value = 2 * (1 - pt(abs(t_stat), df = 4))
   )
 
-# 5️⃣ Flag significant results (p < 0.05)
+#  Flag significant results (p < 0.05)
 t_test <- t_test %>%
   mutate(significant = p_value < 0.05)
 
-# 6️⃣ Inspect results
+# Inspect results
 t_test %>%
   select(stable_ID, variant_ID, position, fitness, fitness_wt, sigma, sigma_wt, t_stat, p_value, significant) %>%
   head()
@@ -489,13 +489,13 @@ print(t_test_plot)
 library(dplyr)
 library(ggplot2)
 
-# 1️⃣ Add a column for WT – Mutant fitness difference
+# Add a column for WT – Mutant fitness difference
 t_test <- t_test %>%
   mutate(
     fitness_diff = fitness_wt - fitness  # difference between WT and variant
   )
 
-# 2️⃣ Categorize variants
+# Categorize variants
 t_test <- t_test %>%
   mutate(
     category = case_when(
@@ -505,7 +505,7 @@ t_test <- t_test %>%
     )
   )
 
-# 3️⃣ Summarize statistics for each category
+# Summarize statistics for each category
 fitness_diff_summary <- t_test %>%
   group_by(category) %>%
   summarise(
@@ -518,7 +518,7 @@ fitness_diff_summary <- t_test %>%
 
 print(fitness_diff_summary)
 
-# 4️⃣ Bar plot of mean fitness difference (with SD error bars)
+#  Bar plot of mean fitness difference (with SD error bars)
 p_bar <- ggplot(fitness_diff_summary, aes(x = category, y = mean_diff, fill = category)) +
   geom_col(alpha = 0.8) +
   geom_errorbar(aes(ymin = mean_diff - sd_diff, ymax = mean_diff + sd_diff), width = 0.2) +
@@ -535,7 +535,7 @@ p_bar <- ggplot(fitness_diff_summary, aes(x = category, y = mean_diff, fill = ca
 
 print(p_bar)
 
-# 5️⃣ Violin plot of all fitness differences
+# Violin plot of all fitness differences
 p_violin <- ggplot(t_test, aes(x = category, y = fitness_diff, fill = category)) +
   geom_violin(trim = FALSE, alpha = 0.6) +
   geom_boxplot(width = 0.1, outlier.shape = NA, color = "black", alpha = 0.5) +
@@ -552,7 +552,7 @@ p_violin <- ggplot(t_test, aes(x = category, y = fitness_diff, fill = category))
 
 print(p_violin)
 
-# 6️⃣ Save the plots
+# Save the plots
 ggsave("fitness_diff_barplot.png", plot = p_bar, width = 8, height = 6, dpi = 300)
 ggsave("fitness_diff_violinplot.png", plot = p_violin, width = 8, height = 6, dpi = 300)
 
@@ -564,12 +564,12 @@ library(dplyr)
 library(ggplot2)
 library(purrr)
 
-# 1️⃣ Count number of wild-types per Pfam
+# Count number of wild-types per Pfam
 pfam_counts <- violin_wt %>%
   group_by(Pfam_ID) %>%
   summarise(num_variants = n(), .groups = "drop")
 
-# 2️⃣ Keep only Pfams with >= 4 wild-types
+#  Keep only Pfams with >= 4 wild-types
 valid_pfams <- pfam_counts %>%
   filter(num_variants >= 4) %>%
   pull(Pfam_ID)
@@ -577,14 +577,14 @@ valid_pfams <- pfam_counts %>%
 violin_wt_filtered <- violin_wt %>%
   filter(Pfam_ID %in% valid_pfams)
 
-# 3️⃣ Determine number of plots you want (for example, 5)
+# Determine number of plots you want (for example, 5)
 num_plots <- 5
 
-# 4️⃣ Split Pfams almost evenly across plots
+#  Split Pfams almost evenly across plots
 pfam_list <- unique(violin_wt_filtered$Pfam_ID)
 chunks <- split(pfam_list, cut(seq_along(pfam_list), breaks = num_plots, labels = FALSE))
 
-# 5️⃣ Function to plot one chunk of Pfams
+#  Function to plot one chunk of Pfams
 plot_violin_chunk <- function(pfam_subset, chunk_num) {
   
   df_chunk <- violin_wt_filtered %>%
@@ -613,10 +613,10 @@ plot_violin_chunk <- function(pfam_subset, chunk_num) {
   return(p)
 }
 
-# 6️⃣ Generate plots for all chunks
+# Generate plots for all chunks
 plots <- imap(chunks, plot_violin_chunk)
 
-# 7️⃣ Display first plot as a check
+# Display first plot as a check
 plots[[1]]
 
 
@@ -672,7 +672,7 @@ library(dplyr)
 library(ggplot2)
 library(purrr)
 
-# 1️⃣ Filter Pfams with > 4 variants
+#  Filter Pfams with > 4 variants
 pfam_counts <- violin_wt %>%
   group_by(Pfam_ID) %>%
   summarise(num_variants = n(), .groups = "drop") %>%
@@ -682,12 +682,12 @@ pfam_counts <- violin_wt %>%
 violin_filtered <- violin_wt %>%
   filter(Pfam_ID %in% pfam_counts$Pfam_ID)
 
-# 2️⃣ Split Pfams into chunks for multiple plots
+#  Split Pfams into chunks for multiple plots
 num_plots <- 3  # You can adjust number of plots
 pfam_list <- unique(violin_filtered$Pfam_ID)
 pfam_chunks <- split(pfam_list, cut(seq_along(pfam_list), num_plots, labels = FALSE))
 
-# 3️⃣ Generate a plot for each chunk
+# Generate a plot for each chunk
 plots <- map2(pfam_chunks, seq_along(pfam_chunks), ~ {
   chunk_data <- violin_filtered %>% filter(Pfam_ID %in% .x)
   
@@ -708,7 +708,7 @@ plots <- map2(pfam_chunks, seq_along(pfam_chunks), ~ {
     )
 })
 
-# 4️⃣ Display plots
+# Display plots
 plots[[1]]  # first plot
 plots[[2]]  # second plot
 plots[[3]]  # third plot (adjust based on num_plots)
@@ -723,7 +723,7 @@ library(dplyr)
 library(ggplot2)
 library(purrr)
 
-# 1️⃣ Filter Pfams with > 4 variants
+# Filter Pfams with > 4 variants
 pfam_counts <- violin_wt %>%
   group_by(Pfam_ID) %>%
   summarise(num_variants = n(), .groups = "drop") %>%
@@ -734,12 +734,12 @@ violin_filtered <- violin_wt %>%
   filter(Pfam_ID %in% pfam_counts$Pfam_ID) %>%
   mutate(inverted_fitness = -fitness)  # invert fitness
 
-# 2️⃣ Split Pfams into chunks for multiple plots
+#  Split Pfams into chunks for multiple plots
 num_plots <- 3  # Adjust as needed
 pfam_list <- unique(violin_filtered$Pfam_ID)
 pfam_chunks <- split(pfam_list, cut(seq_along(pfam_list), num_plots, labels = FALSE))
 
-# 3️⃣ Generate a plot for each chunk
+#  Generate a plot for each chunk
 plots <- map2(pfam_chunks, seq_along(pfam_chunks), ~ {
   chunk_data <- violin_filtered %>% filter(Pfam_ID %in% .x)
   
@@ -760,12 +760,12 @@ plots <- map2(pfam_chunks, seq_along(pfam_chunks), ~ {
     )
 })
 
-# 4️⃣ Display plots
+#  Display plots
 plots[[1]]  # first plot
 plots[[2]]  # second plot
 plots[[3]]  # third plot (adjust based on num_plots)
 
-# 5️⃣ Optionally save each plot
+#  Optionally save each plot
 walk2(plots, seq_along(plots), ~ ggsave(paste0("violin_wt_Pfam_plot_inverted_", .y, ".png"), plot = .x, width = 10, height = 6, dpi = 300))
 
 ```
@@ -861,7 +861,7 @@ library(dplyr)
 library(ggplot2)
 library(purrr)
 
-# 1️⃣ Filter only wild-type variants
+#  Filter only wild-type variants
 wt_data <- t_test %>%
   filter(is_wildtype) %>%
   mutate(variant_label = variant_ID)
@@ -870,10 +870,10 @@ wt_data <- t_test %>%
 num_wt <- nrow(wt_data)
 cat("Total wild-type variants:", num_wt, "\n")
 
-# 2️⃣ Split into chunks of 100 variants each
+#  Split into chunks of 100 variants each
 wt_chunks <- split(wt_data, ceiling(seq_along(1:nrow(wt_data)) / 100))
 
-# 3️⃣ Function to make a violin plot for a chunk
+#  Function to make a violin plot for a chunk
 plot_violin_chunk <- function(df, chunk_num) {
   p <- ggplot(df, aes(x = variant_label, y = fitness, fill = variant_label)) +
     geom_violin(trim = FALSE, alpha = 0.7) +
@@ -912,14 +912,14 @@ plots[[1]]
 library(dplyr)
 library(ggplot2)
 
-# 1️⃣ Filter only wild-type variants
+#  Filter only wild-type variants
 wt_data <- t_test %>%
   filter(is_wildtype) %>%
   mutate(variant_label = variant_ID)
 
 cat("Total wild-type variants:", nrow(wt_data), "\n")
 
-# 2️⃣ (Optional) Order variants by median fitness — makes the plot much clearer
+# (Optional) Order variants by median fitness — makes the plot much clearer
 wt_data <- wt_data %>%
   group_by(variant_label) %>%
   mutate(median_fitness = median(fitness, na.rm = TRUE)) %>%
@@ -927,7 +927,7 @@ wt_data <- wt_data %>%
   arrange(median_fitness) %>%
   mutate(variant_label = factor(variant_label, levels = unique(variant_label)))
 
-# 3️⃣ Create violin plot for all WT variants
+#  Create violin plot for all WT variants
 p_all_wt <- ggplot(wt_data, aes(x = variant_label, y = fitness, fill = variant_label)) +
   geom_violin(trim = FALSE, alpha = 0.7) +
   geom_boxplot(width = 0.1, color = "black", outlier.shape = NA, alpha = 0.5) +
@@ -944,10 +944,10 @@ p_all_wt <- ggplot(wt_data, aes(x = variant_label, y = fitness, fill = variant_l
     axis.text.y = element_text(size = 10)
   )
 
-# 4️⃣ Display the plot
+#  Display the plot
 print(p_all_wt)
 
-# 5️⃣ Save the plot as one large, high-resolution image
+#  Save the plot as one large, high-resolution image
 #ggsave(
  # filename = "all_wildtype_fitness_violin_single.png",
   #plot = p_all_wt,
@@ -1346,7 +1346,7 @@ variant_summary <- t_test %>%
     median_fitness = median(fitness, na.rm = TRUE)
   )
 
-# ✅ Bar plot showing number of variants
+# Bar plot showing number of variants
 p_variant_bar <- ggplot(variant_summary, aes(x = variant_type, y = n_variants, fill = variant_type)) +
   geom_bar(stat = "identity", width = 0.6, color = "black") +
   geom_text(aes(label = n_variants), vjust = -0.5, size = 5, fontface = "bold") +
